@@ -25,7 +25,7 @@ export async function GetArticle() {
     if (txt) body.push(txt);
   });
 
-  console.log({ title, date, heroImages, body });
+  console.log({heroImages, body });
 
   return heroImages, body
 }
