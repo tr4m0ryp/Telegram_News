@@ -2,7 +2,7 @@ import fetch from 'node-fetch';
 import { load } from 'cheerio';
 
 export async function GetArticle() {
-  const url = 'https://consortiumnews.com/2025/05/23/elias-rodriguezs-murderous-gift-to-israel/';
+  const url = 'https://consortiumnews.com/2025/05/23/elias-rodriguezs-murderous-gift-to-israel/'; //this will intergrate with the new_articles.js => each new url pizzarol
   const res = await fetch(url);
   const html = await res.text();
 
