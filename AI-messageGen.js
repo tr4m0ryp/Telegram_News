@@ -10,15 +10,17 @@ import { GetArticle } from "./GetArticleinfo.js"
 const ai = new GoogleGenAI({ apiKey: "nigga" });
 
 export async function AI_message_Gen() {
-    const getarticle = await GetArticle();
-    console.log(getarticle);
+    const { heroImages, body } = await GetArticle();
+    console.log("heroImages:", heroImages);
+    console.log("body:", body);
     
+    const contents = body;
     
-    /*const response = await ai.models.generateContent({
+    const response = await ai.models.generateContent({
         model: "gemini-2.0-flash",
         contents: "is a nigger a nigger if he is a white nigger?",
     });
-    console.log(response.text); */
+    console.log(response.text);
 
 
 }
