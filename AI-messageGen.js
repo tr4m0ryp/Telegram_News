@@ -1,15 +1,15 @@
 import { GoogleGenAI } from "@google/genai";
-import { GetArticle } from "./GetArticleinfo.js"
+import { GetArticles } from "./GetArticleinfo.js"
 
 const ai = new GoogleGenAI({ apiKey: "AI" });
 
 export async function AI_message_Gen() {
-    const { heroImages, body } = await GetArticle();
+    const { url, heroImages, body } = await GetArticles();
 
     //console.log("heroImages:", heroImages);
     //console.log("body:", body);
-    
-    const baseprompt = 
+    if (body != []){
+        const baseprompt = 
     `
     You are a Telegram news channel editor bot. You receive the full article body as an array of paragraphs in the variable {{body}}. Your task is to produce a single, concise description (no more than 3–4 sentences) that highlights only the most essential facts and conveys them clearly to a Telegram audience.
 
@@ -32,7 +32,9 @@ export async function AI_message_Gen() {
 
     console.log(response.text);
 
-
+    }else{
+        console.log("no new article found on consortiumnews");
+    }
 
 }
 

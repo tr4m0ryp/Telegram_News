@@ -7,10 +7,7 @@ export async function getNews(){
         return news_articles;
     }
     catch (error) {
-        console.error(error.message);
-    
-}
-return news_articles;
+        console.error(error.message);}
 }
 
 

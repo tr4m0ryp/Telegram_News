@@ -5,26 +5,27 @@ function sleep(ms) {
 }
 
 
-export async function new_articles_loop(interval_ms = 60000) {
+export async function new_articles_loop(interval_ms = 6000) {
     console.log("starting article monitor loop...");
 
     let previous_urls = await url_filtering() || [];
 
-    while (true) {
-        await sleep(interval_ms);
 
-        const current_urls = await url_filtering() || [];
-        const new_urls = current_urls.filter(url => !previous_urls.includes(url));
+    await sleep(interval_ms);
 
-        if (new_urls.length > 0) {
-            console.log(`Found ${new_urls.length} new URLs:`);
-            new_urls.forEach(url => console.log(url));
-        } else {
-            console.log("No new URLs found.");
-        }
+    const current_urls = await url_filtering() || [];
+    const new_urls = current_urls.filter(url => !previous_urls.includes(url));
 
-        previous_urls = current_urls;
+    /*
+    if (new_urls.length > 0) {
+        console.log(`Found ${new_urls.length} new URLs:`);
+        new_urls.forEach(url => console.log(url));
+    } else {
+        //
     }
+    */
+
+    previous_urls = current_urls;
+    return new_urls;
 }
 
-new_articles_loop();
