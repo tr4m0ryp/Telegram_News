@@ -9,7 +9,7 @@ function sleep(ms) {
 
 
 
-//basic function for geeting the infromation of the post
+//basic function for getting the information of the post
 async function parseArticle(url) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`HTTP ${res.status} bij ${url}`);
@@ -37,36 +37,31 @@ async function parseArticle(url) {
   return { url, heroImages, body };
 }
 
-
 //getarticles
-export async function GetArticles(interval_ms = 6000) {
-  console.log('Starting article fetcher loop…');
+export async function GetArticles() {
+  try {
+    const new_urls = await new_articles_loop();
 
-  while (true) {
-    try {
-      const new_urls = await new_articles_loop(interval_ms);
-
-      if (new_urls.length > 0) {
-        console.log(`Found ${new_urls.length} new URL(s).`);
-      } else {
-        //console.log(' No new URLs this cycle.');
+    if (new_urls && new_urls.length > 0) {
+      console.log(`Found ${new_urls.length} new URL(s).`);
+      
+      // Process the first new article (since we want to process one at a time)
+      const url = new_urls[0];
+      console.log('⬇️  Fetching:', url);
+      try {
+        const article = await parseArticle(url);
+        console.log('Parsed article successfully');
+        return article;
+      } catch (err) {
+        console.error('Error parsing', url, err);
+        return null;
       }
-
-      for (const url of new_urls) {
-        console.log('⬇️  Fetching:', url);
-        try {
-          const article = await parseArticle(url);
-          console.log('Parsed article:', article);
-          return article;
-        } catch (err) {
-          console.error('Error parsing', url, err);
-        }
-      }
-    } catch (err) {
-      console.error('fucking error', err);
     }
-
-    await sleep(interval_ms);
+    
+    return null;
+  } catch (err) {
+    console.error('Error in GetArticles:', err);
+    return null;
   }
 }
 
