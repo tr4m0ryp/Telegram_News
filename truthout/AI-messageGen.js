@@ -1,12 +1,14 @@
 import { GoogleGenAI } from "@google/genai";
-import { GetArticles } from "./GetArticleinfo.js"
+import { GetArticles } from "./GetArticleinfo.js";
+import { globalStats } from '../utils/counter.js';
+import { config } from '../utils/config.js';
 
-const ai = new GoogleGenAI({ apiKey: "YOUR_OWN_API_KEY" }); // Replace with your actual API key
+const ai = new GoogleGenAI({ apiKey: config.google.apiKey });
 
 export async function AI_message_Gen() {
     const article = await GetArticles();
     if (!article || !article.body || article.body.length === 0) {
-        console.log("No new article found on consortiumnews");
+        console.log("No new article found on Truthout");
         return null;
     }
 
@@ -35,6 +37,9 @@ export async function AI_message_Gen() {
 
     const summary = response.text;
     console.log("Generated summary:", summary);
+
+    // Increment AI message counter
+    globalStats.incrementAiMessages();
 
     return {
         summary,
