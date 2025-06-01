@@ -1,18 +1,50 @@
 import { GoogleGenAI } from "@google/genai";
-import { GetArticles } from "./GetArticleinfo.js";
+import { GetArticles, GetLatestArticle } from "./GetArticleinfo.js";
 import { globalStats } from '../utils/counter.js';
 import { config } from '../utils/config.js';
+import { url_filtering } from './url_filtering.js';
 
 const ai = new GoogleGenAI({ apiKey: config.google.apiKey });
 
-export async function AI_message_Gen() {
-    const article = await GetArticles();
+export async function AI_message_Gen(isStartupPhase = false) {
+    console.log('Starting ConsortiumNews article processing...');
+    
+    let article;
+    try {
+        if (isStartupPhase) {
+            console.log('Getting latest article in startup mode...');
+            const urls = await url_filtering(true);
+            if (urls && urls.length > 0) {
+                console.log(`Found ${urls.length} articles, fetching latest...`);
+                article = await GetLatestArticle(urls);
+            } else {
+                console.log('No URLs found in startup mode');
+            }
+        } else {
+            console.log('Getting articles in normal mode...');
+            article = await GetArticles();
+        }
+        console.log('Article fetch result:', article ? 'Article found' : 'No article found');
+        
+        if (article) {
+            console.log('Article URL:', article.url);
+            console.log('Has hero images:', article.heroImages?.length || 0);
+            console.log('Body paragraphs:', article.body?.length || 0);
+        }
+    } catch (error) {
+        console.error('Error fetching article:', error);
+        throw error;
+    }
+    
     if (!article || !article.body || article.body.length === 0) {
-        console.log("No new article found on consortiumnews");
+        console.log("No new article found on ConsortiumNews");
         return null;
     }
 
     const { url, heroImages, body } = article;
+    console.log('Processing article:', url);
+    console.log('Hero images:', heroImages.length);
+    console.log('Body paragraphs:', body.length);
 
     const baseprompt = 
     `
@@ -30,13 +62,15 @@ export async function AI_message_Gen() {
 
     const bodyText = body.join("\n\n");
     const prompt = `${baseprompt}${bodyText}`;
+    
+    console.log('Generating AI summary...');
     const response = await ai.models.generateContent({
         model: "gemini-2.0-flash",
         contents: prompt
     });
 
     const summary = response.text;
-    console.log("Generated summary:", summary);
+    console.log("Generated summary length:", summary.length);
 
     // Increment AI message counter
     globalStats.incrementAiMessages();

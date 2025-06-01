@@ -9,13 +9,25 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-export async function new_articles_loop(interval_ms = 6000) {
+import { FETCH_INTERVAL } from '../utils/constants.js';
+
+let lastFetchTime = 0;
+
+export async function new_articles_loop() {
     if (previous_urls.length === 0) {
         previous_urls = await url_filtering() || [];
     }
 
     while (true) {
-        await sleep(interval_ms);
+        const now = Date.now();
+        if (now - lastFetchTime < FETCH_INTERVAL) {
+            const waitTime = FETCH_INTERVAL - (now - lastFetchTime);
+            console.log(`Next Truthout fetch in ${Math.ceil(waitTime / 1000)} seconds`);
+            await sleep(Math.min(waitTime, 60000)); // Check at most every minute
+            continue;
+        }
+
+        lastFetchTime = now;
         let current_urls = [];
         try {
             current_urls = await url_filtering() || [];

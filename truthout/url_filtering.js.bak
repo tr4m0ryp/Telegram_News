@@ -1,0 +1,176 @@
+import { getNews } from "./articles_grabber.js"
+import { logError } from '../utils/logger.js';
+import { monitor } from '../utils/monitoring.js';
+import { classifyUrl } from '../utils/url_classifier.js';
+
+// Store the last fetch time
+let lastFetchTime = 0;
+const FETCH_INTERVAL = 15 * 60 * 1000; // 15 minutes in milliseconds
+
+export async function url_filtering(isStartupPhase = false) {
+    // Check if enough time has passed since the last fetch
+    const now = Date.now();
+    if (!isStartupPhase && now - lastFetchTime < FETCH_INTERVAL) {
+        console.log(`Skipping fetch - next fetch in ${Math.ceil((FETCH_INTERVAL - (now - lastFetchTime)) / 1000)} seconds`);
+        return null;
+    }
+    
+    lastFetchTime = now;
+    
+    let raw_data;
+    try {
+        raw_data = await getNews();
+        if (!raw_data) {
+            monitor.logParse('Truthout', {
+                status: 'error',
+                phase: 'fetch',
+                error: 'No data received'
+            });
+            return null;
+        }
+    } catch (err) {
+        monitor.logParse('Truthout', {
+            status: 'error',
+            phase: 'fetch',
+            error: err.message
+        });
+        return null;
+    }
+
+    // Get the current date for filtering
+    const currentDate = new Date();
+    const oneDayAgo = new Date(currentDate.getTime() - 24 * 60 * 60 * 1000);
+
+    let $;
+    try {
+        // Use cheerio to parse the HTML properly
+        const cheerio = await import('cheerio');
+        $ = cheerio.load(raw_data);
+
+    monitor.logParse('Truthout', {
+        status: 'info',
+        phase: 'parsing',
+        message: 'Starting HTML parse with LLM classification'
+    });
+
+    const articles = new Set();
+    const classificationResults = [];
+    
+    // Find all article elements with improved selectors
+    console.log('\nAnalyzing Truthout page structure:');
+    ['.content-area', '.article-list', '.main-content', '.stories'].forEach(selector => {
+        console.log(`${selector}:`, $(selector).length ? 'Found' : 'Not found');
+    });
+
+    const selectors = [
+        'div.article-card',
+        'article.post',
+        '.story-item',
+        '.content-area article',
+        '.article-list .article',
+        '.main-content article'
+    ];
+
+    const processedUrls = new Set();
+    
+    for (const selector of selectors) {
+        const elements = $(selector).toArray();
+        console.log(`\nFound ${elements.length} elements with selector: ${selector}`);
+        
+        for (const element of elements) {
+            const $element = $(element);
+            const $link = $element.find('a').first();
+            let url = $link.attr('href');
+            const title = $link.text().trim() || $element.find('h2, h3, .title').first().text().trim();
+            const dateStr = $element.find('time, .date, .published').first().text();
+
+            if (!url) continue;
+            
+            // Make URL absolute if it's relative
+            if (url.startsWith('/')) {
+                url = 'https://truthout.org' + url;
+            }
+            
+            // Skip if we've seen this URL or if it's not an article
+            if (processedUrls.has(url) || 
+                !url.includes('truthout.org/articles/') || 
+                url.includes('/tag/') || 
+                url.includes('/author/') ||
+                url.includes('/category/')) {
+                continue;
+            }
+            
+            try {
+                // Parse the date if available
+                let articleDate;
+                if (dateStr) {
+                    // Try different date formats
+                    articleDate = new Date(dateStr);
+                    if (isNaN(articleDate.getTime())) {
+                        // Try alternative formats...
+                        const match = dateStr.match(/(\w+)\s+(\d+),?\s+(\d{4})/);
+                        if (match) {
+                            articleDate = new Date(`${match[1]} ${match[2]}, ${match[3]}`);
+                        }
+                    }
+                }
+
+                // During startup phase or if article is recent enough
+                if (isStartupPhase || !dateStr || !articleDate || articleDate >= oneDayAgo) {
+                    processedUrls.add(url);
+        
+        if (url?.includes('/articles/') && 
+            !url.includes('/tag/') && 
+            !url.includes('/author/')) {
+            
+            // Classify the URL using our LLM
+            const classification = await classifyUrl(url, title);
+            classificationResults.push({
+                url,
+                title,
+                ...classification
+            });
+            
+            if (classification.isRelevant) {
+                articles.add(url);
+            } else {
+                console.log(`Filtered out URL: ${url} - ${classification.reason}`);
+            }
+        }
+    }
+
+    if (articles.size === 0) {
+        monitor.logParse('Truthout', {
+            status: 'warning',
+            phase: 'extract',
+            message: 'No relevant articles found after classification',
+            classificationResults
+        });
+        console.log('No relevant Truthout articles found');
+        return [];
+    }
+
+    monitor.logParse('Truthout', {
+        status: 'success',
+        phase: 'extract',
+        articleCount: articles.size,
+        classificationResults
+    });
+
+    const cleanedUrls = [...articles].sort();
+    console.log(`Found ${cleanedUrls.length} relevant Truthout articles:`);
+    cleanedUrls.forEach(url => console.log('- ' + url));
+
+    return cleanedUrls;
+  } catch (err) {
+    console.error('Error in Truthout url_filtering:', err);
+    monitor.logParse('Truthout', {
+      status: 'error',
+      phase: 'parse',
+      error: err.message
+    });
+    return null;
+  }
+}
+
+

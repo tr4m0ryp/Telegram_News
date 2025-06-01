@@ -1,54 +1,70 @@
 import fetch from 'node-fetch';
 import { logError, logTerminal } from '../utils/logger.js';
 
-const LONG_RETRY_INTERVAL = 10 * 60 * 1000; // 10 minutes
+async function fetchWithRetry(url, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.5',
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        },
+        timeout: 10000, // 10 second timeout
+        follow: 5 // Follow up to 5 redirects
+      });
 
-async function fetchWithRetry(url, maxRetries = 3) {
-    const browserHeaders = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache'
-    };
-    let lastError = null;
-    for (let attempt = 1; true; attempt++) {
-        try {
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 30000);
-            const response = await fetch(url, {
-                headers: browserHeaders,
-                signal: controller.signal
-            });
-            clearTimeout(timeout);
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status} for ${url}`);
-            }
-            return await response.text();
-        } catch (error) {
-            lastError = error;
-            const waitTime = attempt <= maxRetries ? 2000 * Math.pow(2, attempt - 1) : LONG_RETRY_INTERVAL;
-            const msg = attempt <= maxRetries
-                ? `Attempt ${attempt}/${maxRetries} failed for ConsortiumNews: ${error.name === 'AbortError' ? 'Request timed out' : error.message}\nWaiting ${waitTime/1000} seconds before retry...`
-                : `All ${maxRetries} attempts failed for ConsortiumNews. Waiting ${LONG_RETRY_INTERVAL/1000/60} minutes before trying again...`;
-            console.error(msg);
-            logError(msg);
-            logTerminal(msg);
-            await new Promise(resolve => setTimeout(resolve, waitTime));
-            if (attempt > maxRetries) attempt = 0;
-        }
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} for ${url}`);
+      }
+
+      const html = await response.text();
+      if (!html) {
+        throw new Error('Empty response received');
+      }
+
+      return html;
+    } catch (error) {
+      const isLastAttempt = i === retries - 1;
+      const msg = `Attempt ${i + 1}/${retries} failed to fetch ${url}: ${error.message}`;
+      
+      if (isLastAttempt) {
+        logError(msg);
+        throw error;
+      } else {
+        console.warn(msg + ' - Retrying...');
+        await new Promise(resolve => setTimeout(resolve, 2000 * (i + 1))); // Exponential backoff
+      }
     }
+  }
 }
 
 export async function getNews() {
-    const url = "https://consortiumnews.com/";
+  const urls = [
+    "https://consortiumnews.com/", // Main page
+    "https://consortiumnews.com/recent-stories/", // Recent stories page
+  ];
+
+  for (const url of urls) {
     try {
-        return await fetchWithRetry(url);
+      console.log(`Fetching ConsortiumNews articles from ${url}...`);
+      const content = await fetchWithRetry(url);
+      if (content) {
+        return content;
+      }
     } catch (error) {
-        logError(`Error fetching ConsortiumNews: ${error.message}`);
-        logTerminal(`Error fetching ConsortiumNews: ${error.message}`);
-        return null;
+      const msg = `Error fetching ConsortiumNews from ${url}: ${error.message}`;
+      console.error(msg);
+      logError(msg);
+      logTerminal(msg);
+      // Continue to next URL if this one fails
+      continue;
     }
+  }
+
+  throw new Error('Failed to fetch articles from all ConsortiumNews URLs');
 }
 
 

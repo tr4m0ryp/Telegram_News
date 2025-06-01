@@ -6,13 +6,20 @@ import { config } from '../utils/config.js';
 const ai = new GoogleGenAI({ apiKey: config.google.apiKey });
 
 export async function AI_message_Gen() {
+    console.log('Starting Truthout article processing...');
+    
     const article = await GetArticles();
+    console.log('GetArticles result:', article ? 'Article found' : 'No article found');
+    
     if (!article || !article.body || article.body.length === 0) {
         console.log("No new article found on Truthout");
         return null;
     }
 
     const { url, heroImages, body } = article;
+    console.log('Processing article:', url);
+    console.log('Hero images:', heroImages.length);
+    console.log('Body paragraphs:', body.length);
 
     const baseprompt = 
     `
@@ -30,13 +37,15 @@ export async function AI_message_Gen() {
 
     const bodyText = body.join("\n\n");
     const prompt = `${baseprompt}${bodyText}`;
+    
+    console.log('Generating AI summary...');
     const response = await ai.models.generateContent({
         model: "gemini-2.0-flash",
         contents: prompt
     });
 
     const summary = response.text;
-    console.log("Generated summary:", summary);
+    console.log("Generated summary length:", summary.length);
 
     // Increment AI message counter
     globalStats.incrementAiMessages();

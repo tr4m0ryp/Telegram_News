@@ -1,87 +1,177 @@
 import { getNews } from "./articles_grabber.js"
 import { logError } from '../utils/logger.js';
+import { monitor as proPublicaMonitor } from '../utils/monitoring.js';
+import { classifyUrl } from '../utils/url_classifier.js';
 
-export async function url_filtering(){
+// Store the last fetch time
+let lastFetchTime = 0;
+const FETCH_INTERVAL = 15 * 60 * 1000; // 15 minutes in milliseconds
+
+export async function url_filtering(isStartupPhase = false) {
+    // Skip interval check during startup phase
+    if (!isStartupPhase) {
+        const now = Date.now();
+        if (now - lastFetchTime < FETCH_INTERVAL) {
+            console.log(`Skipping ProPublica fetch - next fetch in ${Math.ceil((FETCH_INTERVAL - (now - lastFetchTime)) / 1000)} seconds`);
+            return null;
+        }
+    }
+    
+    const now = Date.now();
+    lastFetchTime = now;
+    
+    console.log('Fetching ProPublica articles...');
     let raw_data;
     try {
         raw_data = await getNews();
+        if (!raw_data) {
+            proPublicaMonitor.logParse('ProPublica', {
+                status: 'error',
+                phase: 'fetch',
+                error: 'No data received'
+            });
+            return null;
+        }
+        console.log('Successfully fetched ProPublica data');
     } catch (err) {
-        logError(`ProPublica getNews error: ${err}`);
-        return null;
-    }
-    if (!raw_data) {
-        logError("No data received from ProPublica getNews");
+        proPublicaMonitor.logParse('ProPublica', {
+            status: 'error',
+            phase: 'fetch',
+            error: err.message
+        });
         return null;
     }
 
     // Get the current date
-    const now = new Date();
-    const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const currentDate = new Date();
+    const oneDayAgo = new Date(currentDate.getTime() - 24 * 60 * 60 * 1000);
     
-    // Extract article URLs along with their timestamps
-    // ProPublica format has variations:
-    // 1. May 30, 2025, 5 a.m. EDT
-    // 2. May 30, 2025, 3:30 p.m. EDT
-    // 3. May 30, 2025, 5:05 a.m. CDT
-    const articlePattern = /href="(https:\/\/www\.propublica\.org\/article\/[a-z0-9-]+(?:\/)?)"[^>]*>[^<]+<\/a>(?:.*?),\s*([^<]+)(?:\s*(?:EDT|CDT|EST|CST))?/g;
-    const matches = Array.from(raw_data.matchAll(articlePattern));
-    
-    // Filter articles:
-    // 1. Only from the last 24 hours
-    // 2. Exclude certain types of content
-    const filtered_urls = matches
-        .filter(match => {
-            const [, url, dateStr] = match;
-            
-            // Skip non-article and administrative content
-            if (url.includes('/atpropublica/') ||
-                url.includes('/tips/') ||
-                url.includes('/getinvolved/') ||
-                url.includes('/newsletters/') ||
-                url.includes('/about/') ||
-                url.includes('/contact/') ||
-                url.includes('/join/') ||
-                url.includes('/support/') ||
-                url.includes('/subscribe/') ||
-                url.toLowerCase().includes('editor-training') ||
-                url.toLowerCase().includes('fellows') ||
-                url.toLowerCase().includes('job-opening')) {
-                return false;
+    // Use cheerio for better HTML parsing
+    const cheerio = await import('cheerio');
+    const $ = cheerio.load(raw_data);
+
+    console.log('\nAnalyzing ProPublica page structure:');
+    ['.archive-content', '.story-entry', '.article-wrapper', '.stories-list'].forEach(selector => {
+        console.log(`${selector}:`, $(selector).length ? 'Found' : 'Not found');
+    });
+
+    proPublicaMonitor.logParse('ProPublica', {
+        status: 'info',
+        phase: 'parsing',
+        message: 'Starting HTML parse with LLM classification'
+    });
+
+    const foundUrls = new Set();
+    const classificationResults = [];
+
+    // Find all article links in the archive using multiple selectors
+    const selectors = [
+        '.archive-content article',
+        '.story-entry',
+        '.article-wrapper',
+        '.stories-list .story',
+        'article.post',
+        '.article-preview'
+    ];
+
+    for (const selector of selectors) {
+        const elements = $(selector).toArray();
+        console.log(`Found ${elements.length} elements with selector: ${selector}`);
+
+        for (const element of elements) {
+            const $element = $(element);
+            const $link = $element.find('a').first();
+            const url = $link.attr('href');
+            const title = $link.text().trim() || $element.find('h2, h3, .title').first().text().trim();
+            const dateStr = $element.find('time, .timestamp, .pub-date, .date').first().text().trim();
+
+            if (!url || (!url.includes('propublica.org/article/') && !url.startsWith('/article/'))) {
+                continue;
             }
-            
-            // Parse the date string
+
+            // Make URL absolute if it's relative
+            const fullUrl = url.startsWith('/') ? 'https://www.propublica.org' + url : url;
+
             try {
-                // Remove timezone and clean up the date string
+                // Clean up and parse the date string
                 const cleanDateStr = dateStr.replace(/(EDT|CDT|EST|CST)$/, '').trim();
                 const articleDate = new Date(cleanDateStr);
-                
-                // Adjust for timezone if needed
-                if (dateStr.includes('EDT')) {
-                    articleDate.setHours(articleDate.getHours() + 4); // EDT is UTC-4
-                } else if (dateStr.includes('CDT')) {
-                    articleDate.setHours(articleDate.getHours() + 5); // CDT is UTC-5
+
+                console.log('Processing URL:', {
+                    url: fullUrl,
+                    title,
+                    date: cleanDateStr
+                });
+
+                // During startup phase, include all articles
+                if (isStartupPhase || (!isNaN(articleDate.getTime()) && articleDate >= oneDayAgo)) {
+                    // Classify the URL using our LLM
+                    const classification = await classifyUrl(fullUrl, title);
+                    classificationResults.push({
+                        url: fullUrl,
+                        title,
+                        date: articleDate,
+                        ...classification
+                    });
+                    
+                    if (classification.isRelevant) {
+                        foundUrls.add(fullUrl);
+                    } else {
+                        console.log(`Filtered out ProPublica URL: ${fullUrl} - ${classification.reason}`);
+                    }
                 }
-                
-                return articleDate >= oneDayAgo;
             } catch (e) {
-                return false; // Skip if date parsing fails
+                proPublicaMonitor.logParse('ProPublica', {
+                    status: 'error',
+                    phase: 'filter',
+                    error: e.message,
+                    url: fullUrl,
+                    title,
+                    dateStr
+                });
             }
-        })
-        .map(match => match[1]); // Get just the URL
-    
-    if (filtered_urls.length === 0) {
-        console.log("No new ProPublica articles found in the current fetch");
-        return [];
+        }
     }
-    
-    // Remove duplicates and sort
-    const cleaned_data = [...new Set(filtered_urls)].sort();
-    
-    // Only log count of new articles
-    if (cleaned_data.length > 0) {
-        console.log(`Found ${cleaned_data.length} new ProPublica articles from the last 24 hours`);
+
+    if (foundUrls.size === 0) {
+        // During startup phase, try to get at least some articles
+        if (isStartupPhase) {
+            const fallbackSelector = 'a[href*="/article/"]';
+            const links = $(fallbackSelector).toArray();
+            console.log(`Using fallback selector: found ${links.length} article links`);
+
+            for (const link of links.slice(0, 5)) { // Get first 5 articles
+                const url = $(link).attr('href');
+                if (url) {
+                    const fullUrl = url.startsWith('/') ? 'https://www.propublica.org' + url : url;
+                    foundUrls.add(fullUrl);
+                }
+            }
+        }
+
+        if (foundUrls.size === 0) {
+            proPublicaMonitor.logParse('ProPublica', {
+                status: 'warning',
+                phase: 'extract',
+                message: 'No relevant articles found after classification',
+                classificationResults
+            });
+            console.log('No relevant ProPublica articles found');
+            return [];
+        }
     }
-    
+
+    proPublicaMonitor.logParse('ProPublica', {
+        status: 'success',
+        phase: 'extract',
+        articleCount: foundUrls.size,
+        classificationResults
+    });
+
+    const cleaned_data = [...foundUrls].sort();
+    console.log(`Found ${cleaned_data.length} relevant ProPublica articles:`);
+    cleaned_data.forEach(url => console.log('- ' + url));
+
     return cleaned_data;
 }
 

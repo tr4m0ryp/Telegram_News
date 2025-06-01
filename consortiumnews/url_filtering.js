@@ -1,84 +1,150 @@
 import { getNews } from "./articles_grabber.js"
 import { logError } from '../utils/logger.js';
+import { monitor as consortiumMonitor } from '../utils/monitoring.js';
+import { classifyUrl } from '../utils/url_classifier.js';
 
-export async function url_filtering(){
+// Store the last fetch time
+let lastFetchTime = 0;
+const FETCH_INTERVAL = 15 * 60 * 1000; // 15 minutes in milliseconds
+
+export async function url_filtering(isStartupPhase = false) {
+    // Skip interval check during startup phase
+    if (!isStartupPhase) {
+        const now = Date.now();
+        if (now - lastFetchTime < FETCH_INTERVAL) {
+            console.log(`Skipping ConsortiumNews fetch - next fetch in ${Math.ceil((FETCH_INTERVAL - (now - lastFetchTime)) / 1000)} seconds`);
+            return null;
+        }
+    }
+    
+    lastFetchTime = Date.now();
     let raw_data;
     try {
         raw_data = await getNews();
     } catch (err) {
+        consortiumMonitor.logParse('ConsortiumNews', {
+            status: 'error',
+            phase: 'fetch',
+            error: err.message
+        });
         logError(`ConsortiumNews getNews error: ${err}`);
         return null;
     }
     if (!raw_data) {
+        consortiumMonitor.logParse('ConsortiumNews', {
+            status: 'error',
+            phase: 'fetch',
+            error: 'No data received'
+        });
         logError("No data received from ConsortiumNews getNews");
         return null;
     }
 
-    // Get the current date
-    const now = new Date();
-    const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const currentDate = new Date();
+    const oneDayAgo = new Date(currentDate.getTime() - 24 * 60 * 60 * 1000);
     
-    // Extract article URLs along with their timestamps and categories
-    // ConsortiumNews format: href="URL">Title</a>...DATE
-    const articlePattern = /href="(https:\/\/consortiumnews\.com\/\d{4}\/\d{2}\/[a-z0-9-]+\/?)"[^>]*>([^<]+)<\/a>[^>]*>([^<]+)/g;
-    const matches = Array.from(raw_data.matchAll(articlePattern));
+    const cheerio = await import('cheerio');
+    const $ = cheerio.load(raw_data);
     
-    // Filter articles:
-    // 1. Only from the last 24 hours
-    // 2. Exclude certain types of content
-    const filtered_urls = matches
-        .filter(match => {
-            const [, url, title, dateStr] = match;
-            
-            // Skip non-article content
-            if (url.includes('/category/') ||
-                url.includes('/tag/') || 
-                url.includes('/author/') ||
-                url.includes('/feed/') ||
-                url.includes('/series/') ||
-                url.includes('/page/') ||
-                url.includes('/archive/') ||
-                url.includes('/submission-guidelines/') ||
-                url.includes('/about/') ||
-                url.includes('/contact-us/') ||
-                title.toLowerCase().includes('donate') ||
-                title.toLowerCase().includes('fundraiser') ||
-                title.toLowerCase().includes('subscribe') ||
-                title.toLowerCase().includes('support our work')) {
-                return false;
-            }
-            
-            // Parse the date string and compare with 24h ago
-            try {
-                // ConsortiumNews uses format: "May 30, 2025"
-                const articleDate = new Date(dateStr.trim());
-                return articleDate >= oneDayAgo;
-            } catch (e) {
-                // Try alternate date format if first parse fails
-                try {
-                    const [month, day, year] = dateStr.split(' ');
-                    const altDate = new Date(`${month} ${day.replace(',', '')} ${year}`);
-                    return altDate >= oneDayAgo;
-                } catch (e2) {
-                    return false; // Skip if both date parsing attempts fail
+    consortiumMonitor.logParse('ConsortiumNews', {
+        status: 'info',
+        phase: 'parsing',
+        message: 'Starting HTML parse'
+    });
+
+    const articles = new Set();
+    const classificationResults = [];
+
+    // Find all article links with more specific selectors
+    console.log('Searching for article links...');
+    const links = $('.post-box .entry-title a, article.post .entry-title a, .post-article .entry-title a').toArray();
+    console.log(`Found ${links.length} article links`);
+
+    for (const link of links) {
+        const $link = $(link);
+        let url = $link.attr('href');
+        const title = $link.text().trim();
+        let dateStr = $link.closest('article, .post-article, .post').find('time, .entry-date, .post-date').text().trim();
+
+        if (!url || !title) {
+            console.log('Skipping link: Missing URL or title');
+            continue;
+        }
+
+        // Make URL absolute and normalize
+        try {
+            const urlObj = new URL(url, 'https://consortiumnews.com');
+            url = urlObj.href;
+        } catch (e) {
+            console.log(`Invalid URL: ${url}`);
+            continue;
+        }
+
+        // Filter out non-article URLs
+        if (url.includes('/category/') ||
+            url.includes('/tag/') || 
+            url.includes('/author/') ||
+            url.includes('/feed/') ||
+            url.includes('/page/')) {
+            console.log('Filtered non-article URL:', url);
+            continue;
+        }
+
+        // Parse the date
+        let articleDate;
+        try {
+            articleDate = new Date(dateStr);
+            if (isNaN(articleDate.getTime())) {
+                const match = dateStr.match(/(\w+)\s+(\d+),?\s+(\d{4})/);
+                if (match) {
+                    articleDate = new Date(`${match[1]} ${match[2]}, ${match[3]}`);
                 }
             }
-        })
-        .map(match => match[1]); // Get just the URL
-    
-    if (filtered_urls.length === 0) {
-        console.log("No new ConsortiumNews articles found in the current fetch");
+        } catch (e) {
+            console.log(`Error parsing date "${dateStr}" for URL: ${url}`);
+            if (isStartupPhase) {
+                // During startup, include articles even if we can't parse the date
+                articleDate = new Date();
+            } else {
+                continue;
+            }
+        }
+
+        // During startup phase, be more lenient with date check
+        if (isStartupPhase || (articleDate && articleDate >= oneDayAgo)) {
+            articles.add(url);
+            if (!isStartupPhase) {
+                const classification = await classifyUrl(url, title);
+                classificationResults.push({
+                    url,
+                    title,
+                    date: articleDate?.toISOString(),
+                    ...classification
+                });
+            }
+        }
+    }
+
+    if (articles.size === 0) {
+        console.log("No new relevant ConsortiumNews articles found");
+        consortiumMonitor.logParse('ConsortiumNews', {
+            status: 'info',
+            phase: 'filter',
+            message: 'No articles passed filtering'
+        });
         return [];
     }
     
-    // Remove duplicates and sort
-    const cleaned_data = [...new Set(filtered_urls)].sort();
+    const cleaned_data = [...articles].sort().reverse();
+    console.log(`Found ${cleaned_data.length} relevant ConsortiumNews articles`);
     
-    // Only log count of new articles
-    if (cleaned_data.length > 0) {
-        console.log(`Found ${cleaned_data.length} new ConsortiumNews articles from the last 24 hours`);
-    }
-    
+    consortiumMonitor.logParse('ConsortiumNews', {
+        status: 'success',
+        phase: 'filter',
+        articlesFound: cleaned_data.length,
+        classificationResults
+    });
+
     return cleaned_data;
 }
 

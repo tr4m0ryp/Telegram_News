@@ -1,15 +1,16 @@
 import { url_filtering } from './url_filtering.js';
 import { logError, logNewArticle, logTerminal } from '../utils/logger.js';
 import { globalStats } from '../utils/counter.js';
+import { FETCH_INTERVAL } from '../utils/constants.js';
 
 let previous_urls = [];
-let fetchCount = 0;
+let lastFetchTime = 0;
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-export async function new_articles_loop(interval_ms = 6000) {
+export async function new_articles_loop() {
     console.log("Starting ProPublica article monitor loop...");
     
     if (previous_urls.length === 0) {
@@ -22,8 +23,17 @@ export async function new_articles_loop(interval_ms = 6000) {
     }
 
     while (true) {
-        await sleep(interval_ms);
+        const now = Date.now();
+        if (now - lastFetchTime < FETCH_INTERVAL) {
+            const waitTime = FETCH_INTERVAL - (now - lastFetchTime);
+            console.log(`Next ProPublica fetch in ${Math.ceil(waitTime / 1000)} seconds`);
+            await sleep(Math.min(waitTime, 60000)); // Check at most every minute
+            continue;
+        }
+
+        lastFetchTime = now;
         let current_urls = [];
+        
         try {
             current_urls = await url_filtering() || [];
             // Make sure current_urls is an array and remove any duplicates
