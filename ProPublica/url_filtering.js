@@ -1,159 +1,94 @@
-import { logError } from "../utils/logger.js";
-import { monitor as proPublicaMonitor } from "../utils/monitoring.js";
-import { classifyUrl } from "../utils/url_classifier.js";
-import { fetchWithRetry } from "./articles_grabber.js";
+// url_filtering.js
+import { getLatestArticle } from './articles_grabber.js';
+import { logError } from '../utils/logger.js';
+import { monitor as proPublicaMonitor } from '../utils/monitoring.js';
+import { classifyUrl } from '../utils/url_classifier.js';
 
-// Store the last fetch time
 let lastFetchTime = 0;
-const FETCH_INTERVAL = 15 * 60 * 1000; // 15 minutes in milliseconds
+const FETCH_INTERVAL = 15 * 60 * 1000; // 15 minutes (ms)
 
+/**
+ * On each invocation, if FETCH_INTERVAL hasn’t elapsed, returns null. 
+ * Otherwise, calls getLatestArticle() → compares to lastPublishedUrl → 
+ * returns an array [articleData] if it’s new, or [] if none new.  
+ */
 export async function url_filtering(isStartupPhase = false) {
-  // Skip interval check during startup phase
-  if (!isStartupPhase) {
-    const now = Date.now();
-    if (now - lastFetchTime < FETCH_INTERVAL) {
-      console.log(
-        `Skipping ProPublica fetch - next fetch in ${Math.ceil(
-          (FETCH_INTERVAL - (now - lastFetchTime)) / 1000
-        )} seconds`
-      );
-      return null;
-    }
+  const now = Date.now();
+  if (!isStartupPhase && now - lastFetchTime < FETCH_INTERVAL) {
+    const secsLeft = Math.ceil((FETCH_INTERVAL - (now - lastFetchTime)) / 1000);
+    console.log(`Skipping ProPublica fetch (next in ${secsLeft}s)`);
+    return null;
   }
+  lastFetchTime = now;
 
-  lastFetchTime = Date.now();
-  
+  let latest;
   try {
-    // Fetch both archive and homepage
-    const [archiveData, homeData] = await Promise.all([
-      fetchWithRetry("https://www.propublica.org/archive/"),
-      fetchWithRetry("https://www.propublica.org/")
-    ]);
-
-    const cheerio = await import("cheerio");
-    const $archive = cheerio.load(archiveData);
-    const $home = cheerio.load(homeData);
-
-    proPublicaMonitor.logParse("ProPublica", {
-      status: "info",
-      phase: "parsing",
-      message: "Starting HTML parse"
-    });
-
-    const articles = new Set();
-    const articleDataMap = new Map();
-    const classificationResults = [];
-
-    // Get articles from both sources
-    const articleElements = [
-      ...$archive('[data-qa="story-list"] article').toArray(),
-      ...$home('[data-qa="top-story"], [data-qa="story-card"]').toArray()
-    ];
-
-    console.log(`Found ${articleElements.length} potential articles`);
-    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
-
-    for (const element of articleElements) {
-      const $ = cheerio.load(element);
-      
-      // Try to parse JSON-LD first
-      const jsonLD = $('script[type="application/ld+json"]').html();
-      let articleData = tryParseJSONLD(jsonLD);
-
-      if (!articleData) {
-        // Fallback to DOM parsing
-        articleData = {
-          url: $('a[data-qa="story-link"]').attr('href'),
-          title: $('h2, h3').first().text().trim(),
-          date: $('time').attr('datetime'),
-          image: $('img[data-qa="image"]').attr('src')
-        };
-      }
-
-      if (!articleData.url) continue;
-
-      try {
-        const url = new URL(articleData.url, 'https://www.propublica.org').href;
-        const articleDate = articleData.date ? new Date(articleData.date) : new Date();
-
-        if (!isStartupPhase && articleDate < threeDaysAgo) continue;
-
-        // Store article data
-        articles.add(url);
-        articleDataMap.set(url, {
-          title: articleData.title,
-          date: articleDate,
-          previewImage: articleData.image ? 
-            new URL(articleData.image, 'https://www.propublica.org').href : 
-            null
-        });
-
-        if (!isStartupPhase) {
-          const classification = await classifyUrl(url, articleData.title);
-          classificationResults.push({
-            url,
-            title: articleData.title,
-            date: articleDate.toISOString(),
-            previewImage: articleData.image,
-            ...classification
-          });
-        }
-      } catch (e) {
-        console.log(`Error processing article: ${e.message}`);
-      }
-    }
-
-    if (articles.size === 0) {
-      console.log("No new relevant ProPublica articles found");
-      proPublicaMonitor.logParse("ProPublica", {
-        status: "info",
-        phase: "filter",
-        message: "No articles passed filtering"
-      });
-      return [];
-    }
-
-    const result = Array.from(articles)
-      .map(url => ({
-        url,
-        ...articleDataMap.get(url)
-      }))
-      .sort((a, b) => b.date - a.date);
-
-    console.log(`Found ${result.length} relevant ProPublica articles`);
-    proPublicaMonitor.logParse("ProPublica", {
-      status: "success",
-      phase: "filter",
-      articlesFound: result.length,
-      classificationResults
-    });
-
-    return result;
-
+    latest = await getLatestArticle();
   } catch (err) {
-    proPublicaMonitor.logParse("ProPublica", {
-      status: "error",
-      phase: "fetch",
-      error: err.message
+    proPublicaMonitor.logParse('ProPublica', {
+      status: 'error',
+      phase: 'fetch',
+      error: err.message,
     });
-    logError(`ProPublica processing error: ${err}`);
+    logError(`url_filtering → getLatestArticle error: ${err.message}`);
     return null;
   }
-}
 
-function tryParseJSONLD(ldString) {
-  if (!ldString) return null;
-  try {
-    const cleanJSON = ldString.replace(/<\/?script>/g, '');
-    const json = JSON.parse(cleanJSON);
-    return {
-      url: json.url,
-      title: json.headline,
-      date: json.datePublished,
-      image: json.image?.url || json.image?.[0]?.url
-    };
-  } catch (e) {
-    console.log('JSON-LD parse error:', e.message);
-    return null;
+  if (!latest) {
+    console.log('No article found on ProPublica archive.');
+    proPublicaMonitor.logParse('ProPublica', {
+      status: 'info',
+      phase: 'filter',
+      message: 'Archive page found zero <.story-river-item>.',
+    });
+    return [];
   }
+
+  // If this is startup, we simply return the single latest article once.
+  // Otherwise, we should classify it and only return if it’s “newer.”
+  if (isStartupPhase) {
+    console.log('Startup phase: publishing the current latest article.');
+    const toReturn = [latest];
+    // (Optionally, you could classify or logParse here as well.)
+    return toReturn;
+  }
+
+  // At runtime: check if this URL was already processed.
+  // We keep a simple in-memory Set of “already seen” URLs.
+  if (!url_filtering.seenUrls) {
+    url_filtering.seenUrls = new Set();
+  }
+
+  if (url_filtering.seenUrls.has(latest.url)) {
+    console.log('Latest article already seen; nothing to publish.');
+    return [];
+  }
+
+  // New article—mark it seen, classify, and return.
+  url_filtering.seenUrls.add(latest.url);
+  console.log(`New ProPublica article found: ${latest.title}`);
+
+  // Run classification if needed; optional, but follows prior pattern:
+  let classificationResult = {};
+  try {
+    classificationResult = await classifyUrl(latest.url, latest.title);
+  } catch (err) {
+    console.warn(`URL classification failed: ${err.message}`);
+  }
+
+  const fullRecord = {
+    ...latest,
+    date: latest.date.toISOString(),
+    previewImage: latest.previewImage,
+    ...classificationResult,
+  };
+
+  proPublicaMonitor.logParse('ProPublica', {
+    status: 'success',
+    phase: 'filter',
+    articlesFound: 1,
+    classificationResults: [fullRecord],
+  });
+
+  return [fullRecord];
 }
