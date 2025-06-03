@@ -52,6 +52,8 @@ export async function parseArticle(url) {
     const imageSelectors = [
       // Primary ProPublica image selectors with improved specificity
       '.lead-art img[width][height]',
+      'figure.lead-art img[src]',
+      '.hero-image img[src]',
       'article figure img[src*="feature"][width]',
       '.article-header img[src*="header"]',
       '.story-header img[src*="story"]',
@@ -90,6 +92,21 @@ export async function parseArticle(url) {
           heroImages = validatedImages;
           break;
         }
+      }
+    }
+
+    // Fallback to meta tags if no hero image is found
+    if (heroImages.length === 0) {
+      console.log('No hero image found with selectors, checking meta tags...');
+      const metaImage = $('meta[property="og:image"]').attr('content') || $('meta[name="twitter:image"]').attr('content');
+      if (metaImage) {
+        console.log('Found meta image:', metaImage);
+        const validatedMetaImage = await imageHandler.filterAndValidateImages([metaImage]);
+        if (validatedMetaImage.length > 0) {
+          heroImages = validatedMetaImage;
+        }
+      } else {
+        console.log('No meta image found.');
       }
     }
 
@@ -178,6 +195,33 @@ export async function parseArticle(url) {
     });
     throw err;
   }
+}
+
+
+export async function GetLatestArticle(articles) {
+  if (!articles || articles.length === 0) {
+    console.log('No articles provided to GetLatestArticle');
+    return null;
+  }
+
+  // Sort by date if available, otherwise assume the first is the latest
+  let latestArticle = articles[0];
+  if (articles[0].date) {
+    latestArticle = articles.reduce((latest, current) => {
+      if (!current.date) return latest;
+      return latest.date > current.date ? latest : current;
+    }, articles[0]);
+  }
+
+  console.log(`Selected latest article: ${latestArticle.url}`);
+  
+  // If the article already has full details (body), return it
+  if (latestArticle.body && latestArticle.body.length > 0) {
+    return latestArticle;
+  }
+
+  // Otherwise, parse the full article
+  return await parseArticle(latestArticle.url);
 }
 
 

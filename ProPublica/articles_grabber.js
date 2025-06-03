@@ -12,7 +12,7 @@ const agent = new https.Agent({
     rejectUnauthorized: false // Only if needed for SSL issues
 });
 
-async function fetchWithRetry(url, maxRetries = 3) {
+export async function fetchWithRetry(url, maxRetries = 3) {
     const browserHeaders = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',

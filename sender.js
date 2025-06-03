@@ -98,24 +98,36 @@ export async function sendNewsMessage(text, imageUrl = null, url = null) {
                         return;
                     } catch (urlError) {
                         console.log('Direct URL send failed, falling back to buffer method:', urlError.message);
+                        console.log('URL Error details:', urlError.response?.body || urlError.stack || 'No additional details');
                     }
 
                     // If URL method fails, try downloading and sending as buffer
                     console.log('Downloading image...');
                     const imageResponse = await fetch(imageUrl);
                     if (!imageResponse.ok) {
-                        throw new Error(`Failed to download image: ${imageResponse.status}`);
+                        throw new Error(`Failed to download image: ${imageResponse.status} - ${imageResponse.statusText}`);
                     }
 
                     const buffer = Buffer.from(await imageResponse.arrayBuffer());
                     
                     // Send directly using buffer
-                    await bot.sendPhoto(config.telegram.chatId, buffer, {
-                        caption: messageText,
-                        parse_mode: 'HTML',
-                        disable_web_page_preview: true
-                    });
-                    console.log('✅ Photo message sent successfully via buffer');
+                    try {
+                        await bot.sendPhoto(config.telegram.chatId, buffer, {
+                            caption: messageText,
+                            parse_mode: 'HTML',
+                            disable_web_page_preview: true
+                        });
+                        console.log('✅ Photo message sent successfully via buffer');
+                    } catch (bufferError) {
+                        console.error('❌ Error sending photo via buffer:', bufferError.message);
+                        console.error('Buffer Error details:', bufferError.response?.body || bufferError.stack || 'No additional details');
+                        // Fall back to text-only message with image link
+                        console.log('↪️ Falling back to text-only message');
+                        await bot.sendMessage(config.telegram.chatId, `${messageText}\n\n[Image available at: ${imageUrl}]`, {
+                            parse_mode: 'HTML',
+                            disable_web_page_preview: false // Allow preview for image URL
+                        });
+                    }
                     
                 } catch (error) {
                     console.error('❌ Error sending photo:', error);

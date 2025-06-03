@@ -7,6 +7,30 @@ import { classifyUrl } from '../utils/url_classifier.js';
 let lastFetchTime = 0;
 const FETCH_INTERVAL = 15 * 60 * 1000; // 15 minutes in milliseconds
 
+/**
+ * Transform a ConsortiumNews image URL to get the full resolution version
+ * @param {string} imgUrl - The original image URL with size suffix
+ * @returns {string} The URL without size suffix
+ */
+function getFullResolutionImage(imgUrl) {
+    try {
+        // Check if it's a wp-content URL
+        if (!imgUrl || !imgUrl.includes('wp-content/uploads/')) {
+            return imgUrl;
+        }
+        
+        // Match the size suffix pattern (e.g., -500x345 or -260x224)
+        const sizePattern = /-\d+x\d+\.(jpg|jpeg|png|gif)$/i;
+        const extension = imgUrl.split('.').pop();
+        
+        // Replace the size suffix with just the extension
+        return imgUrl.replace(sizePattern, '.' + extension);
+    } catch (err) {
+        console.error('Error transforming image URL:', err);
+        return imgUrl;
+    }
+}
+
 export async function url_filtering(isStartupPhase = false) {
     // Skip interval check during startup phase
     if (!isStartupPhase) {
@@ -41,7 +65,7 @@ export async function url_filtering(isStartupPhase = false) {
     }
 
     const currentDate = new Date();
-    const oneDayAgo = new Date(currentDate.getTime() - 24 * 60 * 60 * 1000);
+    const oneDayAgo = new Date(currentDate.getTime() - 3 * 24 * 60 * 60 * 1000);
     
     const cheerio = await import('cheerio');
     const $ = cheerio.load(raw_data);
@@ -54,20 +78,22 @@ export async function url_filtering(isStartupPhase = false) {
 
     const articles = new Set();
     const classificationResults = [];
+    const articleData = new Map(); // Store article metadata including preview images
 
     // Find all article links with more specific selectors
-    console.log('Searching for article links...');
-    const links = $('.post-box .entry-title a, article.post .entry-title a, .post-article .entry-title a').toArray();
-    console.log(`Found ${links.length} article links`);
+    console.log('Searching for article links and preview images...');
+    const articleElements = $('.post-box, article.post, .post-article').toArray();
+    console.log(`Found ${articleElements.length} article elements`);
 
-    for (const link of links) {
-        const $link = $(link);
+    for (const element of articleElements) {
+        const $article = $(element);
+        const $link = $article.find('.entry-title a').first();
         let url = $link.attr('href');
         const title = $link.text().trim();
-        let dateStr = $link.closest('article, .post-article, .post').find('time, .entry-date, .post-date').text().trim();
+        let dateStr = $article.find('time, .entry-date, .post-date').text().trim();
 
         if (!url || !title) {
-            console.log('Skipping link: Missing URL or title');
+            console.log('Skipping article: Missing URL or title');
             continue;
         }
 
@@ -90,6 +116,32 @@ export async function url_filtering(isStartupPhase = false) {
             continue;
         }
 
+        // Find preview image - look in common preview image locations
+        let previewImage = null;
+        const imageSelectors = [
+            '.featured-image img',
+            '.post-thumbnail img',
+            'img.wp-post-image',
+            '.entry-content img:first-of-type'
+        ];
+
+        for (const selector of imageSelectors) {
+            const $img = $article.find(selector).first();
+            if ($img.length) {
+                const src = $img.attr('src');
+                if (src) {
+                    try {
+                        // Make image URL absolute
+                        previewImage = new URL(src, 'https://consortiumnews.com').href;
+                        //console.log(`Found preview image for ${url}:`, previewImage);
+                        break;
+                    } catch (e) {
+                        console.log(`Invalid image URL: ${src}`);
+                    }
+                }
+            }
+        }
+
         // Parse the date
         let articleDate;
         try {
@@ -103,7 +155,6 @@ export async function url_filtering(isStartupPhase = false) {
         } catch (e) {
             console.log(`Error parsing date "${dateStr}" for URL: ${url}`);
             if (isStartupPhase) {
-                // During startup, include articles even if we can't parse the date
                 articleDate = new Date();
             } else {
                 continue;
@@ -113,12 +164,19 @@ export async function url_filtering(isStartupPhase = false) {
         // During startup phase, be more lenient with date check
         if (isStartupPhase || (articleDate && articleDate >= oneDayAgo)) {
             articles.add(url);
+            articleData.set(url, {
+                title,
+                date: articleDate,
+                previewImage
+            });
+
             if (!isStartupPhase) {
                 const classification = await classifyUrl(url, title);
                 classificationResults.push({
                     url,
                     title,
                     date: articleDate?.toISOString(),
+                    previewImage,
                     ...classification
                 });
             }
@@ -138,6 +196,12 @@ export async function url_filtering(isStartupPhase = false) {
     const cleaned_data = [...articles].sort().reverse();
     console.log(`Found ${cleaned_data.length} relevant ConsortiumNews articles`);
     
+    // Transform the output to include metadata
+    const result = cleaned_data.map(url => ({
+        url,
+        ...articleData.get(url)
+    }));
+
     consortiumMonitor.logParse('ConsortiumNews', {
         status: 'success',
         phase: 'filter',
@@ -145,7 +209,7 @@ export async function url_filtering(isStartupPhase = false) {
         classificationResults
     });
 
-    return cleaned_data;
+    return result;
 }
 
 

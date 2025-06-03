@@ -100,7 +100,9 @@ export async function parseArticle(url) {
         }
         
         const srcs = imageHandler.getImageSources($img);
-        selectorImages.push(...srcs);
+        // Transform each image URL to full resolution
+        const fullResSrcs = srcs.map(getFullResolutionImage);
+        selectorImages.push(...fullResSrcs);
       });
       
       if (selectorImages.length > 0) {
@@ -205,24 +207,58 @@ export async function parseArticle(url) {
   }
 }
 
+/**
+ * Transform a ConsortiumNews image URL to get the full resolution version
+ * @param {string} imgUrl - The original image URL with size suffix
+ * @returns {string} The URL without size suffix
+ */
+function getFullResolutionImage(imgUrl) {
+    try {
+        // Check if it's a wp-content URL
+        if (!imgUrl || !imgUrl.includes('wp-content/uploads/')) {
+            return imgUrl;
+        }
+        
+        // Match the size suffix pattern (e.g., -500x345 or -260x224)
+        const sizePattern = /-\d+x\d+\.(jpg|jpeg|png|gif)$/i;
+        const extension = imgUrl.split('.').pop();
+        
+        // Replace the size suffix with just the extension
+        return imgUrl.replace(sizePattern, '.' + extension);
+    } catch (err) {
+        console.error('Error transforming image URL:', err);
+        return imgUrl;
+    }
+}
+
 // Function to get a specific article
 export async function GetArticles(url) {
   return await parseArticle(url);
 }
 
 // Function to get the latest article from a list of URLs
-export async function GetLatestArticle(urls) {
-  if (!urls || urls.length === 0) {
-    console.log('No URLs provided to GetLatestArticle');
+export async function GetLatestArticle(articles) {
+  if (!articles || articles.length === 0) {
+    console.log('No articles provided to GetLatestArticle');
     return null;
   }
 
-  // Sort URLs by date (assuming format YYYY/MM/DD in the URL)
-  const sortedUrls = [...urls].sort().reverse();
-  const latestUrl = sortedUrls[0];
+  // Sort articles by date
+  const sortedArticles = [...articles].sort((a, b) => {
+    return new Date(b.date) - new Date(a.date);
+  });
   
-  console.log('Fetching latest article:', latestUrl);
-  return await parseArticle(latestUrl);
+  const latest = sortedArticles[0];
+  console.log('Fetching latest article:', latest.url);
+  
+  // Parse the article for content
+  const articleContent = await parseArticle(latest.url);
+  
+  // Use the preview image from the listing instead of searching the article
+  return {
+    ...articleContent,
+    heroImages: latest.previewImage ? [latest.previewImage] : articleContent.heroImages
+  };
 }
 
 
