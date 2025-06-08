@@ -169,7 +169,8 @@ function isValidArticleImage(imgSrc, hostname) {
         // Handle ProPublica images
         if (hostname.includes('propublica.org')) {
             return (url.hostname.includes('propublica.org') || 
-                   url.hostname.includes('assets-c3.propublica.org')) &&
+                   url.hostname.includes('assets-c3.propublica.org') ||
+                   url.hostname.includes('img.assets-d.propublica.org')) &&
                    !url.pathname.includes('avatar');
         }
         

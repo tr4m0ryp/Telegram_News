@@ -39,13 +39,13 @@ async function sendWithRetry(sendFunction, maxRetries = 3) {
 // Function to send message with a single image while preserving Telegram's native discussion feature
 export async function sendNewsMessage(text, imageUrl = null, url = null) {
     try {
-        console.log('🔄 Preparing to send message to Telegram...');
+        console.log('Preparing to send message to Telegram...');
         console.log('Message text:', text?.substring(0, 100) + '...');
         console.log('Image URL:', imageUrl || 'None');
         console.log('Article URL:', url || 'None');
         
         // Add the URL to the text if provided
-        const messageText = url ? `${text}\n\n<a href="${url}">🌐 View Full Article</a>` : text;
+        const messageText = url ? `${text}\n\n<a href="${url}"> 🌐View Full Article</a>` : text;
 
         let success = false;
         if (imageUrl) {
@@ -70,9 +70,9 @@ export async function sendNewsMessage(text, imageUrl = null, url = null) {
                     throw new Error(`Invalid content type: ${contentType}`);
                 }
                 
-                console.log('✅ Image validation passed');
+                console.log('Image validation passed');
             } catch (error) {
-                console.error('❌ Image validation failed:', error.message);
+                console.error('Image validation failed:', error.message);
                 // Fall back to sending text-only message
                 imageUrl = null;
             }
@@ -82,7 +82,7 @@ export async function sendNewsMessage(text, imageUrl = null, url = null) {
             // Send a single photo with caption
             success = await sendWithRetry(async () => {
                 try {
-                    console.log('📤 Preparing to send photo message to Telegram...');
+                    console.log('Preparing to send photo message to Telegram...');
                     console.log('Chat ID:', config.telegram.chatId);
                     console.log('Image URL:', imageUrl);
                     
@@ -94,7 +94,7 @@ export async function sendNewsMessage(text, imageUrl = null, url = null) {
                             parse_mode: 'HTML',
                             disable_web_page_preview: true
                         });
-                        console.log('✅ Photo message sent successfully via URL');
+                        console.log(' Photo message sent successfully via URL');
                         return;
                     } catch (urlError) {
                         console.log('Direct URL send failed, falling back to buffer method:', urlError.message);
@@ -117,12 +117,12 @@ export async function sendNewsMessage(text, imageUrl = null, url = null) {
                             parse_mode: 'HTML',
                             disable_web_page_preview: true
                         });
-                        console.log('✅ Photo message sent successfully via buffer');
+                        console.log('Photo message sent successfully via buffer');
                     } catch (bufferError) {
-                        console.error('❌ Error sending photo via buffer:', bufferError.message);
+                        console.error(' Error sending photo via buffer:', bufferError.message);
                         console.error('Buffer Error details:', bufferError.response?.body || bufferError.stack || 'No additional details');
                         // Fall back to text-only message with image link
-                        console.log('↪️ Falling back to text-only message');
+                        console.log('Falling back to text-only message');
                         await bot.sendMessage(config.telegram.chatId, `${messageText}\n\n[Image available at: ${imageUrl}]`, {
                             parse_mode: 'HTML',
                             disable_web_page_preview: false // Allow preview for image URL
@@ -130,11 +130,11 @@ export async function sendNewsMessage(text, imageUrl = null, url = null) {
                     }
                     
                 } catch (error) {
-                    console.error('❌ Error sending photo:', error);
+                    console.error(' Error sending photo:', error);
                     console.error('Error details:', error.response?.body || 'No additional details');
                     
                     // Fall back to text-only message with image link
-                    console.log('↪️ Falling back to text-only message');
+                    console.log(' Falling back to text-only message');
                     await bot.sendMessage(config.telegram.chatId, `${messageText}\n\n[Image available at: ${imageUrl}]`, {
                         parse_mode: 'HTML',
                         disable_web_page_preview: false // Allow preview for image URL

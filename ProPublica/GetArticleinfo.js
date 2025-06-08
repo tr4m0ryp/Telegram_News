@@ -45,100 +45,118 @@ export async function parseArticle(url) {
       }
     }
 
-    // Get hero image using the ImageHandler utility
-    const imageHandler = new ImageHandler('ProPublica', 'https://www.propublica.org', $);
+    // Get hero image - prioritize main ProPublica domain images
     let heroImages = [];
     
-    const imageSelectors = [
-      // Primary ProPublica image selectors with improved specificity
-      '.lead-art img[width][height]',
-      'figure.lead-art img[src]',
-      '.hero-image img[src]',
-      'article figure img[src*="feature"][width]',
-      '.article-header img[src*="header"]',
-      '.story-header img[src*="story"]',
-      'img.feature-image[src*="propublica"]',
-      // Secondary selectors with quality filters
-      'article .article-body figure:first-of-type img[width]',
-      '.story-body figure:first-of-type img[width]',
-      // Fallback selectors with constraints
-      '.lead-art img[src*="propublica"]',
-      '.article-header img[src*="propublica"]'
-    ];
-
-    console.log('\nSearching for article images...');
+    console.log('\nSearching for ProPublica article images...');
     
-    for (const selector of imageSelectors) {
-      const imgs = $(selector);
-      console.log(`Trying selector "${selector}": found ${imgs.length} images`);
+    // First, look specifically for main domain images (img.assets-d.propublica.org)
+    const mainDomainImages = [];
+    $('img').each((_, img) => {
+      const $img = $(img);
+      const src = $img.attr('src') || $img.attr('data-src');
       
-      const selectorImages = [];
-      imgs.each((_, img) => {
-        const $img = $(img);
+      if (src && src.includes('img.assets-d.propublica.org')) {
+        const width = parseInt($img.attr('width') || '0');
+        const height = parseInt($img.attr('height') || '0');
         
-        if (!imageHandler.isArticleImage($img)) {
-          console.log('Skipping non-article image:', $img.attr('src'));
-          return;
-        }
+        // Prioritize larger images (likely the main hero image)
+        mainDomainImages.push({
+          url: src,
+          width: width,
+          height: height,
+          size: width * height
+        });
         
-        const srcs = imageHandler.getImageSources($img);
-        selectorImages.push(...srcs);
-      });
+        console.log(`Found main domain image: ${src} (${width}x${height})`);
+      }
+    });
+    
+    // Sort by size (largest first) and take the largest one
+    if (mainDomainImages.length > 0) {
+      mainDomainImages.sort((a, b) => b.size - a.size);
+      const bestImage = mainDomainImages[0];
+      console.log(`Selected largest image: ${bestImage.url} (${bestImage.width}x${bestImage.height})`);
       
-      if (selectorImages.length > 0) {
-        console.log(`Found ${selectorImages.length} potential images with selector "${selector}"`);
-        const validatedImages = await imageHandler.filterAndValidateImages(selectorImages);
-        if (validatedImages.length > 0) {
-          heroImages = validatedImages;
-          break;
-        }
-      }
-    }
-
-    // Fallback to meta tags if no hero image is found
-    if (heroImages.length === 0) {
-      console.log('No hero image found with selectors, checking meta tags...');
-      const metaImage = $('meta[property="og:image"]').attr('content') || $('meta[name="twitter:image"]').attr('content');
-      if (metaImage) {
-        console.log('Found meta image:', metaImage);
-        const validatedMetaImage = await imageHandler.filterAndValidateImages([metaImage]);
-        if (validatedMetaImage.length > 0) {
-          heroImages = validatedMetaImage;
-        }
-      } else {
-        console.log('No meta image found.');
-      }
-    }
-
-    // Validate images
-    if (heroImages.length > 0) {
-      console.log('\nValidating images...');
-      for (let i = 0; i < heroImages.length; i++) {
-        const imgUrl = heroImages[i];
-        try {
-          // Check if image is accessible
-          const response = await fetch(imgUrl, { method: 'HEAD' });
-          if (!response.ok) {
-            console.log(`Image ${imgUrl} is not accessible, status: ${response.status}`);
-            heroImages.splice(i, 1);
-            i--;
-            continue;
-          }
-
-          // Check content type
+      // Validate the selected image
+      try {
+        const response = await fetch(bestImage.url, { method: 'HEAD' });
+        if (response.ok) {
           const contentType = response.headers.get('content-type');
-          if (!contentType || !contentType.startsWith('image/') || contentType.includes('svg')) {
-            console.log(`Invalid image type for ${imgUrl}: ${contentType}`);
-            heroImages.splice(i, 1);
-            i--;
-            continue;
+          if (contentType && contentType.startsWith('image/') && !contentType.includes('svg')) {
+            heroImages = [bestImage.url];
+            console.log('✓ Main domain image validated successfully');
           }
-
-          console.log(`✓ Validated image: ${imgUrl}`);
-        } catch (err) {
-          console.log(`Failed to validate image ${imgUrl}:`, err.message);
-          heroImages.splice(i, 1);
-          i--;
+        }
+      } catch (error) {
+        console.log(`Failed to validate main domain image: ${error.message}`);
+      }
+    }
+    
+    // If no main domain image found, use fallback selectors
+    if (heroImages.length === 0) {
+      console.log('No main domain image found, using fallback selectors...');
+      
+      const imageHandler = new ImageHandler('ProPublica', 'https://www.propublica.org', $);
+      const imageSelectors = [
+        // Look for large images in article sections
+        '.lead-art img[width][height]',
+        'figure.lead-art img[src]',
+        '.hero-image img[src]',
+        'article figure img[width]',
+        '.article-header img',
+        '.story-header img',
+        // Broader selectors as last resort
+        'article img[width]'
+      ];
+      
+      for (const selector of imageSelectors) {
+        const imgs = $(selector);
+        console.log(`Trying fallback selector "${selector}": found ${imgs.length} images`);
+        
+        const selectorImages = [];
+        imgs.each((_, img) => {
+          const $img = $(img);
+          
+          if (!imageHandler.isArticleImage($img)) {
+            console.log('Skipping non-article image:', $img.attr('src'));
+            return;
+          }
+          
+          const srcs = imageHandler.getImageSources($img);
+          selectorImages.push(...srcs);
+        });
+        
+        if (selectorImages.length > 0) {
+          console.log(`Found ${selectorImages.length} potential images with selector "${selector}"`);
+          const validatedImages = await imageHandler.filterAndValidateImages(selectorImages);
+          if (validatedImages.length > 0) {
+            heroImages = validatedImages;
+            break;
+          }
+        }
+      }
+      
+      // Final fallback to meta tags if no hero image is found
+      if (heroImages.length === 0) {
+        console.log('No hero image found with selectors, checking meta tags...');
+        const metaImage = $('meta[property="og:image"]').attr('content') || $('meta[name="twitter:image"]').attr('content');
+        if (metaImage) {
+          console.log('Found meta image:', metaImage);
+          try {
+            const response = await fetch(metaImage, { method: 'HEAD' });
+            if (response.ok) {
+              const contentType = response.headers.get('content-type');
+              if (contentType && contentType.startsWith('image/') && !contentType.includes('svg')) {
+                heroImages = [metaImage];
+                console.log('✓ Meta image validated successfully');
+              }
+            }
+          } catch (error) {
+            console.log(`Failed to validate meta image: ${error.message}`);
+          }
+        } else {
+          console.log('No meta image found.');
         }
       }
     }
