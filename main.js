@@ -7,6 +7,7 @@ import {
 import { 
     processLatestArticle as cnProcessLatest,
     checkForNewArticles as cnCheckNew,
+    checkForLatestNewArticle as cnCheckLatest,
     loadPreviousUrls as cnLoadUrls,
     savePreviousUrls as cnSaveUrls
 } from './consortiumnews/main.js';
@@ -44,8 +45,11 @@ async function runNewsSources() {
         console.log('Checking ProPublica for new articles...');
         const ppResults = await ppCheckNew();
         
+        // Add a small delay to prevent any interference between AI calls
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
         console.log('Checking ConsortiumNews for new articles...');
-        const cnResults = await cnCheckNew();
+        const cnResults = await cnCheckLatest();
         
         const totalFound = (ppResults?.length || 0) + (cnResults?.length || 0);
         const successMessage = `Successfully processed ${totalFound} new articles (ProPublica: ${ppResults?.length || 0}, ConsortiumNews: ${cnResults?.length || 0})`;

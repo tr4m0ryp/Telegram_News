@@ -73,19 +73,20 @@ export async function parseArticle(url) {
     let heroImages = [];
     
     const imageSelectors = [
-      // Primary image selectors
-      '.featured-image img[width][height]',
-      '.post-thumbnail img[src*="consortiumnews"]',
-      '.entry-header img[width][height]',
-      // Secondary selectors
-      '.entry-content > figure:first-of-type img[width]',
-      '.entry-content > p:first-of-type img[width]',
+      // Primary featured image selectors
+      '.featured-image img',
+      '.post-thumbnail img',
+      '.entry-header img',
+      // Article content images - prioritize larger images first
+      '.entry-content img[src*="wp-content/uploads/"]:not([src*="-100x100"]):not([src*="-150x150"])',
+      '.entry-content > figure img',
+      '.entry-content > p img',
       // Fallback selectors
-      'article .post-content img[width][height]',
-      '.entry-content img[src*="consortiumnews"]'
+      'article .post-content img',
+      '.entry-content img'
     ];
 
-    console.log('\nSearching for article images...');
+    console.log('\nSearching for ConsortiumNews article images...');
     for (const selector of imageSelectors) {
       const imgs = $(selector);
       console.log(`Trying selector "${selector}": found ${imgs.length} images`);
@@ -93,16 +94,27 @@ export async function parseArticle(url) {
       const selectorImages = [];
       imgs.each((_, img) => {
         const $img = $(img);
+        const imgSrc = $img.attr('src');
         
-        if (!imageHandler.isArticleImage($img)) {
-          console.log('Skipping non-article image:', $img.attr('src'));
+        if (!imgSrc) return;
+        
+        // Skip obvious non-article images
+        if (imgSrc.includes('avatar') || 
+            imgSrc.includes('logo') || 
+            imgSrc.includes('icon') ||
+            imgSrc.includes('donate') ||
+            imgSrc.includes('rssfeedimage') ||
+            imgSrc.includes('-100x100') ||
+            imgSrc.includes('-150x150') ||
+            imgSrc.endsWith('.gif')) {
+          console.log('Skipping non-article image:', imgSrc);
           return;
         }
         
-        const srcs = imageHandler.getImageSources($img);
-        // Transform each image URL to full resolution
-        const fullResSrcs = srcs.map(getFullResolutionImage);
-        selectorImages.push(...fullResSrcs);
+        // Get full resolution image
+        const fullResSrc = getFullResolutionImage(imgSrc);
+        console.log('Found valid ConsortiumNews image:', fullResSrc);
+        selectorImages.push(fullResSrc);
       });
       
       if (selectorImages.length > 0) {
@@ -110,6 +122,7 @@ export async function parseArticle(url) {
         const validatedImages = await imageHandler.filterAndValidateImages(selectorImages);
         if (validatedImages.length > 0) {
           heroImages = validatedImages;
+          console.log(`Successfully validated ${validatedImages.length} images for ConsortiumNews`);
           break;
         }
       }

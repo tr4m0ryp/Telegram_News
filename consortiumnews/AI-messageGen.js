@@ -108,16 +108,3 @@ Here is the body:
 
   return result;
 }
-
-// Self-executing function to handle the async result
-AI_message_Gen().then(result => {
-  if (result) {
-    console.log('Generation completed successfully.');
-  } else {
-    console.log('No message was generated.');
-  }
-}).catch(error => {
-  console.error('Error during message generation:', error);
-});
-
-AI_message_Gen();
