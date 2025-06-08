@@ -5,7 +5,7 @@ import { config } from '../utils/config.js';
 import { url_filtering } from './url_filtering.js';
 import { sendNewsMessage } from '../sender.js';
 
-const ai = new GoogleGenAI({ apiKey: "AIzaSyBu5IPEdCfhIS4zPXqcC3qi82UM0IKDbeA" });
+const ai = new GoogleGenAI({ apiKey: "AIzaSyBu5IPEdCfhIS4zPXqcC3qi82UM0IKDbeA" }); //keep this api key; is free
 
 // Temporarily store the original logStats function
 const originalLogStats = globalStats.logStats;

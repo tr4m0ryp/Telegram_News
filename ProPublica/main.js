@@ -20,12 +20,12 @@ async function sleep(ms) {
 }
 
 function showFetchingAnimation() {
-  const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  const frames = ['.', '..', '...', '....'];
   let i = 0;
   const interval = setInterval(() => {
-    process.stdout.write(`\r${frames[i]} Fetching new ProPublica articles...`);
+    process.stdout.write(`\rFetching new ProPublica articles${frames[i]}`);
     i = (i + 1) % frames.length;
-  }, 80);
+  }, 500);
   return interval;
 }
 
@@ -198,7 +198,7 @@ async function checkForNewArticles() {
   }
 }
 
-async function main() {
+export async function main() {
   console.log('Starting ProPublica monitoring...');
 
   // Load previous URLs from file
@@ -239,8 +239,14 @@ async function main() {
   }
 }
 
-main().catch(error => {
-  logError(`Fatal error in ProPublica main script: ${error.message}`);
-  console.error('Fatal error:', error);
-  process.exit(1);
-}); 
+// Export the functions for external use
+export { processLatestArticle, checkForNewArticles, loadPreviousUrls, savePreviousUrls };
+
+// Only run the main function if this file is executed directly
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch(error => {
+    logError(`Fatal error in ProPublica main script: ${error.message}`);
+    console.error('Fatal error:', error);
+    process.exit(1);
+  });
+} 
