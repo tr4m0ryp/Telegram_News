@@ -45,7 +45,7 @@ export async function sendNewsMessage(text, imageUrl = null, url = null) {
         console.log('Article URL:', url || 'None');
         
         // Add the URL to the text if provided
-        const messageText = url ? `${text}\n\n<a href="${url}"> 🌐View Full Article</a>` : text;
+        const messageText = url ? `${text}\n\n<a href="${url}"> 🌐View Full Article</a> \n<a href="https://t.me/tramoryp_news"> 💼Join the Channel</a> ` : text;
 
         let success = false;
         if (imageUrl) {
